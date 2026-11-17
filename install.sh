@@ -4,16 +4,15 @@
 #   curl -fsSL https://raw.githubusercontent.com/sibincbaby/lwdb-releases/main/install.sh | sh
 # LWDB_VERSION=v0.2.0 picks a release (default: the latest); LWDB_BIN_DIR overrides ~/.local/bin.
 # Published as install.sh in github.com/sibincbaby/lwdb-releases; the source is scripts/get.sh.
+# Releases come from Firebase Cloud Storage (Google's CDN; `latest` names the newest), else from
+# the GitHub release (scripts/publish.sh puts them in both).
 set -eu
-repo=https://github.com/sibincbaby/lwdb-releases/releases
+cdn=https://storage.googleapis.com/lwdb-releases.firebasestorage.app/lwdb
+gh=https://github.com/sibincbaby/lwdb-releases/releases
 case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) plat=macos-arm64 ;;
     Linux-x86_64 | Linux-amd64) plat=linux-x86_64 ;;
     *) echo "lwdb: no build for $(uname -s) $(uname -m) (macOS Apple Silicon and Linux x86_64 only)" >&2; exit 1 ;;
-esac
-case "${LWDB_VERSION:-latest}" in
-    latest) url=$repo/latest/download ;;
-    *) url=$repo/download/$LWDB_VERSION ;;
 esac
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -54,9 +53,26 @@ fetch() {
         curl $net -fsSL "$1" -o "$2"
     fi
 }
-echo "lwdb: downloading lwdb-$plat.tar.gz"
-again fetch "$url/lwdb-$plat.tar.gz" "$tmp/lwdb-$plat.tar.gz"
-again curl $net -fsSL "$url/SHA256SUMS" -o "$tmp/SHA256SUMS"
+version=${LWDB_VERSION:-}
+if [ -z "$version" ]; then
+    version=$(curl $net -fsSL "$cdn/latest" 2>/dev/null | tr -d ' \r\n') || version=""
+fi
+case $version in
+    "" | v[0-9]*.[0-9]*.[0-9]*) ;;
+    *) echo "lwdb: not a release: $version (e.g. LWDB_VERSION=v0.3.1)" >&2; exit 1 ;;
+esac
+# the package and its checksums from one place
+get() {
+    again fetch "$1/lwdb-$plat.tar.gz" "$tmp/lwdb-$plat.tar.gz" &&
+        again curl $net -fsSL "$1/SHA256SUMS" -o "$tmp/SHA256SUMS"
+}
+echo "lwdb: downloading lwdb-$plat.tar.gz${version:+ ($version)}"
+if [ -z "$version" ]; then
+    get "$gh/latest/download"
+elif ! get "$cdn/$version"; then
+    echo "lwdb: trying GitHub instead" >&2
+    get "$gh/download/$version"
+fi
 want=$(grep " lwdb-$plat.tar.gz\$" "$tmp/SHA256SUMS" | cut -d' ' -f1)
 if command -v sha256sum >/dev/null; then
     have=$(sha256sum "$tmp/lwdb-$plat.tar.gz" | cut -d' ' -f1)
