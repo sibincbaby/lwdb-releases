@@ -17,9 +17,46 @@ case "${LWDB_VERSION:-latest}" in
 esac
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# a connection that hangs, or a download that stalls under 1 KB/s for 30 s: drop it and retry
+net="--retry 3 --retry-delay 2 --connect-timeout 20 --speed-limit 1024 --speed-time 30"
+# and any failure at all (a name lookup that fails is not one curl retries): the whole download
+# again, three times in all
+again() {
+    n=1
+    until "$@"; do
+        [ $n -lt 3 ] || return 1
+        echo "lwdb: the download failed; trying again" >&2
+        n=$((n + 1))
+        sleep 3
+    done
+}
+# Download $1 to $2: in a terminal curl draws its progress bar; for the app (LWDB_PROGRESS=1,
+# no terminal) a line each second, "lwdb: downloading 37%", that it shows as a progress bar.
+fetch() {
+    if [ "${LWDB_PROGRESS:-}" = 1 ]; then
+        curl $net -fL# "$1" -o "$2" 2>"$2.progress" &
+        pid=$! last=""
+        while kill -0 "$pid" 2>/dev/null; do
+            p=$(tr '\r' '\n' <"$2.progress" | grep -o '[0-9][0-9.]*%' | tail -n 1)
+            p=${p%\%}
+            p=${p%%.*}
+            if [ -n "$p" ] && [ "$p" != "$last" ]; then echo "lwdb: downloading $p%"; last=$p; fi
+            sleep 1
+        done
+        if ! wait "$pid"; then
+            tr '\r' '\n' <"$2.progress" | grep -v '%' | grep . | tail -n 1 >&2
+            return 1
+        fi
+        [ "$last" = 100 ] || echo "lwdb: downloading 100%"
+    elif [ -t 2 ]; then
+        curl $net -fL# "$1" -o "$2"
+    else
+        curl $net -fsSL "$1" -o "$2"
+    fi
+}
 echo "lwdb: downloading lwdb-$plat.tar.gz"
-curl -fsSL "$url/lwdb-$plat.tar.gz" -o "$tmp/lwdb-$plat.tar.gz"
-curl -fsSL "$url/SHA256SUMS" -o "$tmp/SHA256SUMS"
+again fetch "$url/lwdb-$plat.tar.gz" "$tmp/lwdb-$plat.tar.gz"
+again curl $net -fsSL "$url/SHA256SUMS" -o "$tmp/SHA256SUMS"
 want=$(grep " lwdb-$plat.tar.gz\$" "$tmp/SHA256SUMS" | cut -d' ' -f1)
 if command -v sha256sum >/dev/null; then
     have=$(sha256sum "$tmp/lwdb-$plat.tar.gz" | cut -d' ' -f1)
