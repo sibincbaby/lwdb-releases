@@ -70,7 +70,7 @@ echo "lwdb: downloading lwdb-$plat.tar.gz${version:+ ($version)}"
 if [ -z "$version" ]; then
     get "$gh/latest/download"
 elif ! get "$cdn/$version"; then
-    echo "lwdb: trying GitHub instead" >&2
+    echo "lwdb: trying another download source" >&2
     get "$gh/download/$version"
 fi
 want=$(grep " lwdb-$plat.tar.gz\$" "$tmp/SHA256SUMS" | cut -d' ' -f1)
